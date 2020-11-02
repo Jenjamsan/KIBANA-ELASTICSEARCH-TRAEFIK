@@ -1,0 +1,111 @@
+version: '3.3' 
+services:
+  traefik:
+    image: "traefik:v2.3"
+    container_name: "traefik2"
+    command:
+          - "--log.level=DEBUG"
+          - "--log.filePath=/var/log/traefik-log/traefik.log"
+          - "--accesslog=true"
+          - "--accesslog.bufferingsize=100"
+          - "--accesslog.filepath=/var/log/traefik-log/access.log"
+          - "--api.dashboard=true"
+          - "--providers.docker=true"
+          - "--providers.docker.exposedbydefault=false"
+          - "--entrypoints.web.address=:80"
+          - "--entrypoints.websecure.address=:443"
+          - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+          - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+    labels:
+        - "traefik.http.routers.http_catchall.rule=HostRegexp(`{any:.+}`)"
+        - "traefik.http.routers.http_catchall.entrypoints=web"
+        - "traefik.http.routers.http_catchall.middlewares=https_redirect"
+        - "traefik.http.middlewares.https_redirect.redirectscheme.scheme=https"
+        - "traefik.http.middlewares.https_redirect.redirectscheme.permanent=true"
+        - "traefik.enable=true"
+        - "traefik.http.routers.api.rule=Host(`traefik2.cyberrh.local`)"
+        - "traefik.http.routers.api.service=api@internal"
+        - "traefik.http.routers.api.entrypoints=websecure"
+        - "traefik.http.routers.api.middlewares=auth"
+        - "traefik.http.middlewares.auth.basicauth.users=bs:$$2y$$05$$wV5JAi7F03qLff2ljY3C2eH9YBAc..dIVEbEhot5MMCHfKHJH1qR6"
+        - "traefik.http.routers.nginx.rule=Host(`cyberrh.local`)"
+        - "traefik.http.routers.nginx.service=api@internal"
+        - "traefik.http.routers.nginx.tls.domains.main=cyberrh.local"
+        - "traefik.tls.certificates.certFile=/etc/certs/cyberrh.local+3.pem"
+        - "traefik.tls.certificates.certFile=/etc/certs/cyberrh.local+3-key.pem"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./acme.json:/acme.json"
+      - "./traefik-log:/var/log/traefik-log"
+      - "/usr/share/zoneinfo:/usr/share/zoneinfo:ro"
+      - "/opt/traefik/certs/:/home/master/docker-elk-master/certificates/certs/"
+    networks:
+      - elk
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
+    container_name: elasticsearch
+    volumes:
+      - type: bind
+        source: ./elasticsearch/config/elasticsearch.yml
+        target: /usr/share/elasticsearch/config/elasticsearch.yml
+        read_only: true
+      - type: volume
+        source: elasticsearch
+        target: /usr/share/elasticsearch/data
+    ports:
+        - "9200:9200"
+        - "9300:9300"
+    environment:
+        ES_JAVA_OPTS: "-Xmx256m -Xms256m"
+        ELASTIC_PASSWORD: <Azerty@1234>
+        discovery.type: single-node
+    networks:
+        - elk
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.8.0
+    container_name: logstash
+    volumes:
+      - type: bind
+        source: ./logstash/config/logstash.yml
+        target: /usr/share/logstash/config/logstash.yml
+        read_only: true
+      - type: bind
+        source: ./logstash/pipeline
+        target: /usr/share/logstash/pipeline
+        read_only: true
+    ports:
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.8.0
+    container_name: kibana
+    volumes:
+      - type: bind
+        source: ./kibana/config/kibana.yml
+        target: /usr/share/kibana/config/kibana.yml
+        read_only: true
+    labels:
+       - "traefik.enable=true"
+       - "traefik.http.routers.kibana.rule=Host(`kibana.cyberrh.local`)"
+       - "traefik.http.routers.kibana.entrypoints=websecure"
+       - "traefik.http.routers.kibana.tls=true"
+    networks:
+      - elk
+    depends_on:
+      - elasticsearch
+
+networks:
+  elk:
+    external: true 
+volumes:
+  elasticsearch:
